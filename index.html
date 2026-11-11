@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Meerschweinchensimulator</title>
+<style>
+:root{font-family:Arial,sans-serif;color:#fff;background:#18231d}
+*{box-sizing:border-box}body{margin:0;overflow:hidden}
+#game{position:fixed;inset:0}canvas{display:block}
+.panel{background:#18251feF;border:1px solid #8ba78b;border-radius:16px;padding:22px;box-shadow:0 12px 40px #0008}
+#menu{position:fixed;inset:0;display:grid;place-items:center;background:linear-gradient(#13271aaa,#13271add),url('') center/cover;z-index:5}
+#menu .panel{width:min(440px,92vw);text-align:center}
+h1{font-size:clamp(32px,7vw,54px);line-height:1.02;margin:5px 0 12px;color:#b8e2a5}
+p{line-height:1.45;color:#d8e4d5}
+input{width:100%;padding:12px;margin:5px 0;border-radius:9px;border:1px solid #829782;background:#29382e;color:white}
+button{border:0;border-radius:10px;background:#68a95d;color:#102011;font-weight:bold;padding:12px 16px;margin:5px;cursor:pointer}
+button.secondary{background:#3c5144;color:white;border:1px solid #809780}
+.row{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+#hud{position:fixed;inset:0;pointer-events:none;z-index:2}
+#top{position:absolute;top:12px;left:12px;right:12px;display:flex;justify-content:space-between;gap:8px}
+.pill{background:#15231dcc;padding:9px 12px;border-radius:10px;font-size:14px}
+#stats{position:absolute;left:12px;top:58px;background:#15231dcc;border-radius:10px;padding:10px 13px;font-size:13px;line-height:1.8}
+#hint{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);background:#15231dcc;padding:10px 15px;border-radius:10px;text-align:center;white-space:nowrap}
+#cross{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:22px;color:white;text-shadow:0 1px 4px black}
+#chat{position:fixed;z-index:6;left:50%;bottom:70px;transform:translateX(-50%);width:min(420px,94vw);pointer-events:auto}
+#chatlog{max-height:120px;overflow:auto;font-size:14px}
+#chatrow{display:flex;gap:5px}#chatrow input{flex:1;min-width:0}
+#inventory{position:fixed;z-index:6;left:50%;top:50%;transform:translate(-50%,-50%);width:min(380px,92vw);display:none}
+#inventory button{min-width:100px}
+#message{position:fixed;z-index:8;top:18%;left:50%;transform:translateX(-50%);background:#17251feF;padding:10px 16px;border-radius:10px;display:none}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div id="game"></div>
+<div id="menu">
+ <div class="panel">
+  <div style="font-size:42px">🏡 🐹</div>
+  <h1>MEERSCHWEINCHEN-<br>SIMULATOR</h1>
+  <p>Ein kleines 3D-Abenteuer im bunten Block-Spielstil.</p>
+  <div id="auth">
+   <div class="row"><button id="loginTab">Anmelden</button><button class="secondary" id="registerTab">Registrieren</button></div>
+   <input id="username" placeholder="Benutzername" maxlength="20">
+   <input id="password" type="password" placeholder="Passwort">
+   <button id="authGo">Anmelden</button>
+   <p id="authMsg" style="font-size:13px">Demo-Konto erstellen oder anmelden. Daten bleiben nur in diesem Browser.</p>
+  </div>
+  <div id="roles" class="hidden">
+   <p>Welche Rolle möchtest du spielen?</p>
+   <div class="row"><button id="humanRole">🧑 Mensch</button><button id="pigRole">🐹 Meerschweinchen</button></div>
+   <p id="roleInfo">Wähle deine Rolle.</p>
+   <button id="start">Spielen</button>
+  </div>
+  <p style="font-size:11px">Lokaler Prototyp · Noch kein Online-Multiplayer</p>
+ </div>
+</div>
+<div id="hud" class="hidden">
+ <div id="top"><div class="pill">🐹 Meerschweinchensimulator</div><div class="pill" id="roleTag">Mensch</div></div>
+ <div id="stats">❤️ Wohlbefinden: <span id="health">100</span><br>🌾 Sättigung: <span id="food">100</span><br>💧 Durst: <span id="water">100</span></div>
+ <div id="cross">+</div><div id="hint">WASD bewegen · Maus umsehen · E benutzen · T Chat</div>
+</div>
+<div id="chat" class="panel hidden">
+ <b>💬 Haus-Chat</b><div id="chatlog"></div>
+ <div id="chatrow"><input id="chatInput" placeholder="Nachricht schreiben…"><button id="send">Senden</button></div>
+ <small>Enter senden / schließen · T schließen</small>
+</div>
+<div id="inventory" class="panel">
+ <b>🎒 Inventar</b><p>Wähle etwas zum Füttern:</p>
+ <div class="row"><button data-feed="hay">🌾 Heu</button><button data-feed="water">💧 Wasser</button><button data-feed="carrot">🥕 Karotte</button></div>
+ <button class="secondary" id="closeInv">Schließen (E)</button>
+</div>
+<div id="message"></div>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+const $=id=>document.getElementById(id);
+let accounts=JSON.parse(localStorage.getItem('msimAccounts')||'{}'),authMode='login',role='human',started=false,chatOpen=false,invOpen=false,held=false;
+let food=100,water=100,health=100,lastTick=performance.now(),noticeTimer;
+$('loginTab').onclick=()=>{authMode='login';$('authGo').textContent='Anmelden';$('authMsg').textContent='Melde dich mit deinem Konto an.'};
+$('registerTab').onclick=()=>{authMode='register';$('authGo').textContent='Registrieren';$('authMsg').textContent='Erstelle ein Demo-Konto.'};
+$('authGo').onclick=()=>{
+ const u=$('username').value.trim(),p=$('password').value;
+ if(!u||!p){$('authMsg').textContent='Bitte beide Felder ausfüllen.';return}
+ if(authMode==='register'){
+  if(accounts[u]){$('authMsg').textContent='Dieser Name ist bereits vergeben.';return}
+  accounts[u]=p;localStorage.setItem('msimAccounts',JSON.stringify(accounts));$('authMsg').textContent='Registriert! Jetzt anmelden.';authMode='login';$('authGo').textContent='Anmelden';
+ }else if(accounts[u]===p){$('auth').classList.add('hidden');$('roles').classList.remove('hidden')}
+ else $('authMsg').textContent='Login nicht gefunden. Bitte registrieren.';
+};
+$('humanRole').onclick=()=>{role='human';$('roleInfo').textContent='Du spielst als Mensch. WASD zum Laufen.'};
+$('pigRole').onclick=()=>{role='pig';$('roleInfo').textContent='Du spielst als Meerschweinchen. WASD zum Laufen, Rechtsklick zum Fressen.'};
+$('start').onclick=()=>{if(!$('roles').classList.contains('hidden')){ $('menu').classList.add('hidden');$('hud').classList.remove('hidden');$('roleTag').textContent=role==='human'?'🧑 Mensch':'🐹 Meerschweinchen';startGame()}};
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x9ac6df);scene.fog=new THREE.Fog(0x9ac6df,25,65);
+const camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,.1,100);camera.position.set(0,1.7,7);
+const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;$('game').appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff,0x78865c,2));
+const sun=new THREE.DirectionalLight(0xffffff,2.2);sun.position.set(-8,14,8);sun.castShadow=true;scene.add(sun);
+const mat=(color,roughness=.85)=>new THREE.MeshStandardMaterial({color,roughness});
+const floorMat=mat(0xc9a77c),wallMat=mat(0xf0dfbd),wood=mat(0x986b46),green=mat(0x73a65c),metal=mat(0x82959b);
+function box(name,x,y,z,w,h,d,m){const o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);o.name=name;o.position.set(x,y,z);o.castShadow=true;o.receiveShadow=true;scene.add(o);return o}
+box('floor',0,-.15,0,24,.3,20,floorMat);
+box('backwall',0,2,-10,24,4,.3,wallMat);box('leftwall',-12,2,0,.3,4,20,wallMat);box('rightwall',12,2,0,.3,4,20,wallMat);
+box('frontwallleft',-5,2,10,.3,4,.3,wallMat);box('frontwallright',5,2,10,.3,4,.3,wallMat);
+box('partition',0,1.5,-2, .25,3,8,wallMat);box('partition2',5,1.5,3,7,.25,.25,wallMat);
+function label(text,x,y,z){const c=document.createElement('canvas');c.width=512;c.height=100;const g=c.getContext('2d');g.fillStyle='#493b2d';g.font='bold 42px Arial';g.textAlign='center';g.fillText(text,256,65);const tex=new THREE.CanvasTexture(c);const m=new THREE.MeshBasicMaterial({map:tex,transparent:true});const o=new THREE.Mesh(new THREE.PlaneGeometry(4,0.8),m);o.position.set(x,y,z);scene.add(o)}
+label('WOHNZIMMER',-5,3.4,-9.7);label('KÜCHE',6,3.4,-9.7);label('MEERSCHWEINCHEN-ZIMMER',-6,3.4,8.5);
+function furniture(x,z,w,d,color){box('Möbel',x,.45,z,w,.9,d,mat(color))}
+furniture(-6,-5,4,2,0x9d7655);furniture(7,-5,3,1.4,0x9d7655);furniture(-6,5,3,1.5,0x9d7655);
+box('Kühlschrank',5,1.2,-7,1.5,2.4,1.2,mat(0xb8d4d9));box('Mikrowelle',8,1.2,-7,1.5,1.2,1.1,mat(0x87969b));box('Mülleimer',9,.6,5,1,1.2,1,mat(0x60696c));
+box('Käfig',-7,.55,5,4,.9,2.7,wood);box('Käfigboden',-7,1.05,5,3.8,.12,2.5,mat(0xd9c79e));
+for(let i=0;i<9;i++)box('Gitter',-8.8+i*.45,1.55,5, .045,1,.045,metal);
+const hay=box('Heu',-5,.2,4, .8,.35,.7,green);const bowl=box('Wassernapf',-4,.12,5.8,.55,.22,.55,metal);
+function makePig(){
+ const group=new THREE.Group(),brown=mat(0xb9845e),cream=mat(0xf0d5b6),black=mat(0x171717);
+ const body=new THREE.Mesh(new THREE.SphereGeometry(.48,16,12),brown);body.scale.set(1, .8,1.35);body.position.y=.5;group.add(body);
+ const head=new THREE.Mesh(new THREE.SphereGeometry(.32,16,12),cream);head.position.set(0,.65,-.48);group.add(head);
+ for(const x of [-.22,.22]){const ear=new THREE.Mesh(new THREE.SphereGeometry(.14,12,8),brown);ear.position.set(x,.88,-.48);ear.scale.set(1,1.25,.6);group.add(ear);const eye=new THREE.Mesh(new THREE.SphereGeometry(.045,8,8),black);eye.position.set(x*.75,.7,-.77);group.add(eye)}
+ for(const x of [-.23,.23]){const leg=new THREE.Mesh(new THREE.BoxGeometry(.16,.22,.17),cream);leg.position.set(x,.17,.2);group.add(leg)}
+ group.position.set(-7,0,4.5);group.traverse(o=>{if(o.isMesh)o.castShadow=true});scene.add(group);return group;
+}
+const pig=makePig();const ray=new THREE.Raycaster();const center=new THREE.Vector2(0,0);let yaw=0,pitch=0;const keys={};let mouseLocked=false;
+function startGame(){started=true;camera.position.set(role==='human'?0: -7,role==='human'?1.7:.9,role==='human'?7:7);camera.rotation.set(0,0,0);yaw=0;pitch=0;lastTick=performance.now();renderer.domElement.requestPointerLock?.()}
+renderer.domElement.addEventListener('click',()=>{if(started&&!chatOpen&&!invOpen)renderer.domElement.requestPointerLock?.()});
+document.addEventListener('pointerlockchange',()=>mouseLocked=document.pointerLockElement===renderer.domElement);
+document.addEventListener('mousemove',e=>{if(!mouseLocked||!started)return;yaw-=e.movementX*.0022;pitch-=e.movementY*.0022;pitch=Math.max(-1.45,Math.min(1.45,pitch));camera.rotation.order='YXZ';camera.rotation.set(pitch,yaw,0)});
+document.addEventListener('keydown',e=>{
+ if(!started)return;
+ if(e.key.toLowerCase()==='t'&&!e.repeat){toggleChat();return}
+ if(e.key==='Enter'){if(chatOpen){if($('chatInput').value.trim())sendChat();toggleChat()}else toggleInventory();return}
+ if(e.key.toLowerCase()==='e'){toggleInventory();return}
+ keys[e.key.toLowerCase()]=true;
+});
+document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+document.addEventListener('contextmenu',e=>e.preventDefault());
+document.addEventListener('mousedown',e=>{
+ if(!started||chatOpen||invOpen)return;
+ if(e.button===2){
+  if(role==='human'){held=!held;notice(held?'Meerschweinchen vorsichtig aufgenommen.':'Meerschweinchen abgesetzt.')}
+  else feed('hay');
+ }else if(e.button===0){
+  if(role==='human')notice('Du streichelst das Meerschweinchen. ❤️');
+  else notice('QUIIIIEK! 🐹');
+ }
+});
+function notice(t){$('message').textContent=t;$('message').style.display='block';clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>$('message').style.display='none',2200)}
+function toggleChat(){chatOpen=!chatOpen;$('chat').classList.toggle('hidden',!chatOpen);if(chatOpen){document.exitPointerLock?.();$('chatInput').focus()}else if(started)renderer.domElement.requestPointerLock?.()}
+function toggleInventory(){invOpen=!invOpen;$('inventory').style.display=invOpen?'block':'none';if(invOpen)document.exitPointerLock?.();else if(started)renderer.domElement.requestPointerLock?.()}
+function sendChat(){const v=$('chatInput').value.trim();if(!v)return;const d=document.createElement('div');d.textContent=(role==='human'?'🧑 ':'🐹 ')+v;$('chatlog').appendChild(d);$('chatInput').value=''}
+$('send').onclick=sendChat;$('chatInput').addEventListener('keydown',e=>{if(e.key==='Enter'){sendChat();toggleChat()}});
+$('closeInv').onclick=toggleInventory;
+document.querySelectorAll('[data-feed]').forEach(b=>b.onclick=()=>{feed(b.dataset.feed);toggleInventory()});
+function feed(kind){if(kind==='hay'){food=Math.min(100,food+25);notice('Knusper! Heu gefressen 🌾')}if(kind==='water'){water=Math.min(100,water+30);notice('Schlürf! Wasser getrunken 💧')}if(kind==='carrot'){food=Math.min(100,food+12);notice('Leckere Karotte! 🥕')}updateStats()}
+function updateStats(){$('health').textContent=Math.round(health);$('food').textContent=Math.round(food);$('water').textContent=Math.round(water)}
+const clock=new THREE.Clock();
+function animate(){
+ requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);
+ if(started&&!chatOpen&&!invOpen){
+  const forward=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw)),right=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));let dir=new THREE.Vector3();
+  if(keys.w)dir.add(forward);if(keys.s)dir.sub(forward);if(keys.a)dir.sub(right);if(keys.d)dir.add(right);
+  if(dir.lengthSq()>0){dir.normalize().multiplyScalar(4.5*dt);camera.position.add(dir)}
+  camera.position.x=THREE.MathUtils.clamp(camera.position.x,-11,11);camera.position.z=THREE.MathUtils.clamp(camera.position.z,-9,9);
+  if(held&&role==='human'){pig.position.copy(camera.position).add(forward.clone().multiplyScalar(1.2));pig.position.y=0}
+  if(role==='pig'){pig.position.x=camera.position.x;pig.position.z=camera.position.z}
+  const now=performance.now();if(now-lastTick>5000){food=Math.max(0,food-.5);water=Math.max(0,water-.4);if(food<10||water<10)health=Math.max(0,health-.3);lastTick=now;updateStats()}
+ }
+ renderer.render(scene,camera);
+}
+animate();
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+</script>
+</body>
+</html>
